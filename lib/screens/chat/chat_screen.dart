@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -7,6 +6,7 @@ import '../../models/cefr_level.dart';
 import '../../providers/chat_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/audio_service.dart';
+import '../../services/sentence_tts_player.dart';
 import '../../services/tts_service.dart';
 import '../../services/whisper_transcription_service.dart';
 import '../../widgets/cefr_badge.dart';
@@ -29,9 +29,11 @@ class _ChatScreenState extends State<ChatScreen> {
   final _audioService = AudioService();
   final _ttsService = TTSService();
   final _whisperService = WhisperTranscriptionService();
+  late final SentenceTtsPlayer _ttsPlayer = SentenceTtsPlayer(tts: _ttsService);
   bool _showTranslation = false;
   String? _translatedText;
   String? _previousResponse;
+  bool _streamingSpeakActive = false;
   late final ChatProvider _chatProvider;
 
   @override
@@ -43,7 +45,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
-    try { _currentTtsProcess?.kill(); } catch (_) {}
+    _ttsPlayer.dispose();
     _chatProvider.removeListener(_onChatChanged);
     _textController.dispose();
     _scrollController.dispose();
@@ -55,35 +57,38 @@ class _ChatScreenState extends State<ChatScreen> {
     super.dispose();
   }
 
-  int _lastSpokenMessageCount = 0;
   String? _lastSpokenConversationId;
 
   void _onChatChanged() {
+    // Reset speak state when switching conversations (don't auto-speak history)
+    final convId = _chatProvider.currentConversation?.id;
+    if (convId != _lastSpokenConversationId) {
+      _lastSpokenConversationId = convId;
+      _streamingSpeakActive = false;
+      _ttsPlayer.cancel();
+    }
+
     // Auto-scroll while generating — only when response actually grows
     if (_chatProvider.isGenerating && _chatProvider.currentResponse != _previousResponse) {
       _previousResponse = _chatProvider.currentResponse;
       _scrollToBottom();
     }
 
-    // Reset speak counter when switching conversations (don't auto-speak history)
-    final convId = _chatProvider.currentConversation?.id;
-    if (convId != _lastSpokenConversationId) {
-      _lastSpokenConversationId = convId;
-      _lastSpokenMessageCount = _chatProvider.messages.length;
-      return;
-    }
-
-    // Auto-speak each new finalized assistant message (not while streaming)
-    if (!_chatProvider.isGenerating) {
-      final msgs = _chatProvider.messages;
-      if (msgs.length > _lastSpokenMessageCount) {
-        final latest = msgs.last;
-        _lastSpokenMessageCount = msgs.length;
-        if (latest.role == MessageRole.assistant && latest.content.trim().isNotEmpty) {
-          // Fire and forget — don't block UI; suppress error snackbars for auto-play
-          _speak(latest.content, showErrors: false);
+    // --- Streaming TTS: pipe tokens to the sentence player as they arrive ---
+    if (_chatProvider.isGenerating) {
+      final partial = _chatProvider.currentResponse;
+      if (partial.isNotEmpty) {
+        if (!_streamingSpeakActive) {
+          _streamingSpeakActive = true;
+          _ttsPlayer.cancel(); // drop any leftovers from a prior turn
         }
+        _ttsPlayer.acceptText(partial);
       }
+    } else if (_streamingSpeakActive) {
+      // Generation just finished — flush any trailing text that had no
+      // terminal punctuation.
+      _streamingSpeakActive = false;
+      _ttsPlayer.finalize();
     }
   }
 
@@ -99,43 +104,14 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  Process? _currentTtsProcess;
-
-  /// Speak text via TTS. Cancels any previous playback so rapid sequential
-  /// calls (e.g., auto-speak + manual replay) don't overlap.
-  Future<void> _speak(String text, {bool showErrors = true}) async {
-    // Kill any in-flight playback
-    try {
-      _currentTtsProcess?.kill();
-    } catch (_) {}
-    _currentTtsProcess = null;
-
-    final path = await _ttsService.synthesize(text);
-    if (path == null) {
-      if (showErrors && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('TTS not available. Run: scripts/start_services.bat')),
-        );
-      }
-      return;
-    }
-
-    await _audioService.initialize();
-    try {
-      final proc = await Process.start('powershell', [
-        '-NoProfile', '-Command',
-        '(New-Object Media.SoundPlayer "$path").PlaySync()',
-      ]);
-      _currentTtsProcess = proc;
-      await proc.exitCode;
-      if (identical(_currentTtsProcess, proc)) _currentTtsProcess = null;
-    } catch (_) {
-      if (showErrors && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Audio playback failed.')),
-        );
-      }
-    }
+  /// Replay a complete message via TTS. Cancels any in-flight auto-playback
+  /// first so tapping the speaker icon doesn't collide with streaming.
+  Future<void> _speak(String text) async {
+    await _ttsPlayer.cancel();
+    // Reuse the streaming player so replay and auto-play share the same
+    // pipeline (sentence-chunked for low latency).
+    _ttsPlayer.acceptText(text);
+    _ttsPlayer.finalize();
   }
 
   void _sendMessage(ChatProvider chat, CEFRLevel level) {

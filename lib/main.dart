@@ -7,6 +7,7 @@ import 'services/database_service.dart';
 import 'services/translation_service.dart';
 import 'services/cefr_service.dart';
 import 'services/srs_service.dart';
+import 'services/tts_service.dart';
 import 'providers/settings_provider.dart';
 import 'providers/chat_provider.dart';
 import 'providers/srs_provider.dart';
@@ -34,6 +35,12 @@ void main() async {
   final db = DatabaseService();
   final cefrService = CEFRService();
   final srsService = SRSService(db: db);
+
+  // Warm the Kokoro TTS server on startup — first synthesis after cold
+  // start is slow because it lazy-loads the voice embedding + vocoder.
+  // Throw away the result; we just want the model resident.
+  // ignore: discarded_futures
+  TTSService().synthesize('.').then((_) {}).catchError((_) {});
 
   // SettingsProvider owns the LLMService lifecycle.
   // It creates the appropriate backend (Ollama, Direct FFI, or Gemma)

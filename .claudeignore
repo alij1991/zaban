@@ -1,0 +1,123 @@
+# .claudeignore — patterns Claude Code should skip when searching this repo.
+#
+# NOTE: Claude Code primarily honors .gitignore for search scoping. This file
+# is a convention signal for agentic tooling and a human reference for "don't
+# bother reading these". Keep it aligned with .gitignore for consistency.
+# Anything you add here should ALSO be in .gitignore if it's truly not worth
+# indexing.
+
+# ──────────────────────────────────────────────────────────────
+# Build artifacts (huge, regenerable, zero information value)
+# ──────────────────────────────────────────────────────────────
+build/
+/build/
+.dart_tool/
+.flutter-plugins-dependencies
+.flutter-plugins
+_llama_build/
+**/ephemeral/
+**/Generated.xcconfig
+**/Flutter.podspec
+windows/flutter/ephemeral/
+
+# ──────────────────────────────────────────────────────────────
+# Prebuilt binaries (fetched at setup time, not part of source)
+# ──────────────────────────────────────────────────────────────
+bin/
+*.dll
+*.so
+*.dylib
+*.exe
+*.pdb
+
+# ──────────────────────────────────────────────────────────────
+# Model files — large and binary, never useful to read
+# ──────────────────────────────────────────────────────────────
+*.gguf
+*.litertlm
+*.task
+*.bin
+*.safetensors
+*.onnx
+*.pt
+*.pth
+*.ckpt
+
+# ──────────────────────────────────────────────────────────────
+# Python venv + caches
+# ──────────────────────────────────────────────────────────────
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ──────────────────────────────────────────────────────────────
+# Database and runtime state
+# ──────────────────────────────────────────────────────────────
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# ──────────────────────────────────────────────────────────────
+# TTS / STT caches (tts_cache/ is under app support dir, but just in case)
+# ──────────────────────────────────────────────────────────────
+tts_cache/
+whisper_cache/
+*.wav
+*.mp3
+*.m4a
+*.ogg
+*.flac
+
+# ──────────────────────────────────────────────────────────────
+# Dependency lock files — huge, not human-edited
+# ──────────────────────────────────────────────────────────────
+pubspec.lock
+package-lock.json
+yarn.lock
+Pipfile.lock
+poetry.lock
+
+# ──────────────────────────────────────────────────────────────
+# Editor / IDE local state
+# ──────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.iml
+.claude/
+
+# ──────────────────────────────────────────────────────────────
+# OS junk
+# ──────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ──────────────────────────────────────────────────────────────
+# Logs & temp
+# ──────────────────────────────────────────────────────────────
+*.log
+*.tmp
+*.swp
+*.swo
+*~
+
+# ──────────────────────────────────────────────────────────────
+# Generated Flutter plugin registrants (stable, regenerated on build)
+# ──────────────────────────────────────────────────────────────
+lib/generated_plugin_registrant.dart
+windows/flutter/generated_plugin_registrant.cc
+windows/flutter/generated_plugin_registrant.h
+windows/flutter/generated_plugins.cmake
+
+# ──────────────────────────────────────────────────────────────
+# Coverage, test output
+# ──────────────────────────────────────────────────────────────
+coverage/
+.coverage
+test-results/

@@ -20,7 +20,7 @@ dependencies:
   google_fonts: ^6.2.1
   fl_chart: ^0.70.2
   record: ^6.2.0
-  just_audio: ^0.9.43
+  audioplayers: ^6.1.0
   intl: ^0.20.2
   collection: ^1.19.1
   window_manager: ^0.5.1

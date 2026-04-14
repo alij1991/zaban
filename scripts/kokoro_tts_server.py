@@ -110,6 +110,15 @@ class TTSHandler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    # Warm the pipeline — first synthesis lazy-loads the voice embedding
+    # and vocoder, which otherwise adds ~800ms to the first real request.
+    print("Warming TTS pipeline...")
+    try:
+        synthesize_to_wav(".", voice=args.voice)
+        print("  [OK] Pipeline warm.")
+    except Exception as e:
+        print(f"  [!] Warmup failed (non-fatal): {e}")
+
     server = HTTPServer((args.host, args.port), TTSHandler)
     print(f"\nKokoro TTS server listening on http://{args.host}:{args.port}")
     print(f"  POST /v1/audio/speech — synthesize text to audio")
