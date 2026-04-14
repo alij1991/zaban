@@ -1,0 +1,10 @@
+# Zaban — AI English Tutor: Python dependencies
+# Installed into .venv/ by setup.bat
+
+# Speech-to-Text (Whisper model via CTranslate2)
+faster-whisper>=1.0
+
+# Text-to-Speech (Kokoro — MOS 4.2, Apache 2.0)
+kokoro>=0.9
+soundfile
+numpy
