@@ -339,6 +339,37 @@ class DatabaseService {
     return results.map((m) => Flashcard.fromMap(m)).toList();
   }
 
+  Future<Flashcard?> getFlashcardForVocabulary(String vocabularyId) async {
+    final db = await database;
+    final results = await db.query(
+      'flashcards',
+      where: 'vocabulary_id = ?',
+      whereArgs: [vocabularyId],
+      limit: 1,
+    );
+    if (results.isEmpty) return null;
+    return Flashcard.fromMap(results.first);
+  }
+
+  /// Delete a vocabulary item and any linked flashcards.
+  /// Uses an explicit transaction since older DBs may not have ON DELETE CASCADE
+  /// (SQLite can't retrofit FK constraints via ALTER TABLE).
+  Future<void> deleteVocabulary(String vocabularyId) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete(
+        'flashcards',
+        where: 'vocabulary_id = ?',
+        whereArgs: [vocabularyId],
+      );
+      await txn.delete(
+        'vocabulary',
+        where: 'id = ?',
+        whereArgs: [vocabularyId],
+      );
+    });
+  }
+
   // --- Lesson Progress ---
 
   Future<void> saveLessonProgress(LessonProgress progress) async {

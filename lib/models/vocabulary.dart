@@ -38,6 +38,32 @@ class VocabularyItem {
   double get accuracy =>
       timesReviewed > 0 ? timesCorrect / timesReviewed : 0.0;
 
+  VocabularyItem copyWith({
+    String? word,
+    String? translation,
+    String? phonetic,
+    String? partOfSpeech,
+    String? exampleSentence,
+    String? exampleTranslation,
+    CEFRLevel? cefrLevel,
+    bool? isProductive,
+  }) => VocabularyItem(
+    id: id,
+    word: word ?? this.word,
+    translation: translation ?? this.translation,
+    phonetic: phonetic ?? this.phonetic,
+    partOfSpeech: partOfSpeech ?? this.partOfSpeech,
+    exampleSentence: exampleSentence ?? this.exampleSentence,
+    exampleTranslation: exampleTranslation ?? this.exampleTranslation,
+    cefrLevel: cefrLevel ?? this.cefrLevel,
+    contextConversationId: contextConversationId,
+    firstEncountered: firstEncountered,
+    timesEncountered: timesEncountered,
+    timesReviewed: timesReviewed,
+    timesCorrect: timesCorrect,
+    isProductive: isProductive ?? this.isProductive,
+  );
+
   Map<String, dynamic> toMap() => {
     'id': id,
     'word': word,

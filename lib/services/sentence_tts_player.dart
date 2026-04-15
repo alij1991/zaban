@@ -86,27 +86,52 @@ class SentenceTtsPlayer {
     }
   }
 
+  String? _extractCompleteSentence(String text) => extractCompleteSentence(text);
+
   /// Returns the prefix of [text] up to (and including) the first real
   /// sentence terminator, or null if no complete sentence yet.
-  String? _extractCompleteSentence(String text) {
+  /// Skips past abbreviations ("Dr.", "e.g.") to find the next real terminator.
+  /// Exposed as a top-level helper for unit testing.
+  @visibleForTesting
+  static String? extractCompleteSentence(String text) {
     if (text.isEmpty) return null;
 
     // Newlines end sentences too (lists, dialog turns).
     final newlineIdx = text.indexOf('\n');
     if (newlineIdx > 0) return text.substring(0, newlineIdx);
 
-    final pattern = RegExp(r'[.!?]+(?:\s|$)');
-    final match = pattern.firstMatch(text);
-    if (match == null) return null;
-
-    final candidate = text.substring(0, match.end);
-    final lower = candidate.trimRight().toLowerCase();
-    for (final abbr in _abbreviations) {
-      if (lower.endsWith(abbr)) return null;
+    // Match terminal punctuation optionally followed by closing quotes/parens,
+    // then whitespace or end-of-string. Handles cases like `"Hello!" she said.`
+    // and `(great idea.)` where the closing char would otherwise block firing
+    // until the next space arrives.
+    final pattern = RegExp('[.!?]+["\\\')\u201D\u2019\u00BB]*(?:\\s|\$)');
+    var searchFrom = 0;
+    while (searchFrom < text.length) {
+      final match = pattern.firstMatch(text.substring(searchFrom));
+      if (match == null) return null;
+      final absEnd = searchFrom + match.end;
+      final candidate = text.substring(0, absEnd);
+      final lower = candidate.trimRight().toLowerCase();
+      var isAbbrev = false;
+      for (final abbr in _abbreviations) {
+        if (lower.endsWith(abbr)) {
+          isAbbrev = true;
+          break;
+        }
+      }
+      if (isAbbrev) {
+        // Advance past this terminator and look for the next one.
+        searchFrom = absEnd;
+        continue;
+      }
+      // Require a minimum length so we don't hand ". . ." to TTS.
+      if (candidate.trim().length < 3) {
+        searchFrom = absEnd;
+        continue;
+      }
+      return candidate;
     }
-    // Require a minimum length so we don't hand ". . ." to TTS.
-    if (candidate.trim().length < 3) return null;
-    return candidate;
+    return null;
   }
 
   /// Synthesize in the background; when done, append to the queue if still

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -47,34 +48,43 @@ class TTSService {
     }
   }
 
-  /// Synthesize text to a WAV/MP3 file. Returns the local file path.
+  /// Synthesize text to a WAV file. Returns the local file path once the
+  /// response has been fully written. Uses chunked HTTP streaming under the
+  /// hood so the server starts sending bytes as soon as the first audio chunk
+  /// is synthesized. Hits an on-disk cache first so replays (tapping the
+  /// speaker icon twice on the same message) skip synthesis entirely.
   Future<String?> synthesize(String text) async {
     if (!_initialized) await initialize();
     if (text.trim().isEmpty) return null;
 
-    final filename = '${DateTime.now().millisecondsSinceEpoch}.wav';
-    final outputPath = p.join(_audioDir, filename);
+    // Cache lookup — replaying the same sentence costs a stat() call.
+    final cacheKey = sha1.convert(utf8.encode('$voice|$text')).toString();
+    final cachedPath = p.join(_audioDir, 'cache_$cacheKey.wav');
+    final cached = File(cachedPath);
+    if (await cached.exists()) {
+      final len = await cached.length();
+      if (len > 100) return cachedPath;
+    }
 
+    final outputPath = cachedPath;
+
+    // Primary: Kokoro streaming endpoint.
     try {
-      // Try Kokoro-style API first
-      final response = await _client.post(
+      final path = await _streamSynthToFile(
         Uri.parse('$host/v1/audio/speech'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
+        jsonEncode({
           'input': text,
           'voice': voice,
           'model': 'kokoro',
           'response_format': 'wav',
+          'stream': true,
         }),
-      ).timeout(const Duration(seconds: 15));
-
-      if (response.statusCode == 200 && response.bodyBytes.length > 100) {
-        await File(outputPath).writeAsBytes(response.bodyBytes);
-        return outputPath;
-      }
+        outputPath,
+      );
+      if (path != null) return path;
     } catch (_) {}
 
-    // Fallback: try simple POST with form data
+    // Fallback: buffered endpoint.
     try {
       final response = await _client.post(
         Uri.parse('$host/synthesize'),
@@ -89,6 +99,37 @@ class TTSService {
     } catch (_) {}
 
     return null;
+  }
+
+  /// POST with streaming body parse: writes chunks to [outputPath] as they
+  /// arrive, returns the path once the stream closes cleanly. Lets the server
+  /// flush first audio bytes the instant the first Kokoro chunk is ready.
+  Future<String?> _streamSynthToFile(Uri uri, String jsonBody, String outputPath) async {
+    final req = http.Request('POST', uri)
+      ..headers['Content-Type'] = 'application/json'
+      ..body = jsonBody;
+
+    final streamed = await _client.send(req).timeout(const Duration(seconds: 15));
+    if (streamed.statusCode != 200) return null;
+
+    final file = File(outputPath);
+    final sink = file.openWrite();
+    var total = 0;
+    try {
+      await for (final chunk in streamed.stream) {
+        sink.add(chunk);
+        total += chunk.length;
+      }
+      await sink.flush();
+    } finally {
+      await sink.close();
+    }
+    if (total < 100) {
+      // Corrupted / empty response.
+      try { await file.delete(); } catch (_) {}
+      return null;
+    }
+    return outputPath;
   }
 
   /// Stream synthesis: accumulate tokens until sentence boundary,
@@ -145,15 +186,21 @@ class TTSService {
     return candidate;
   }
 
-  /// Clean up old TTS cache files older than 1 hour.
+  /// Clean up stale TTS cache files. `cache_*.wav` entries are content-hashed
+  /// and kept for 7 days — they never stale (same text + voice = same bytes).
+  /// Anything else (legacy timestamp-named files) is cleared after 1 hour.
   Future<void> cleanCache() async {
     if (_audioDir.isEmpty) return;
     final dir = Directory(_audioDir);
     if (!await dir.exists()) return;
-    final cutoff = DateTime.now().subtract(const Duration(hours: 1));
+    final now = DateTime.now();
+    final cacheCutoff = now.subtract(const Duration(days: 7));
+    final legacyCutoff = now.subtract(const Duration(hours: 1));
     await for (final entity in dir.list()) {
       if (entity is File) {
+        final name = p.basename(entity.path);
         final stat = await entity.stat();
+        final cutoff = name.startsWith('cache_') ? cacheCutoff : legacyCutoff;
         if (stat.modified.isBefore(cutoff)) {
           await entity.delete();
         }

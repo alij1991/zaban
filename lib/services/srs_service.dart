@@ -1,3 +1,4 @@
+import '../models/cefr_level.dart';
 import '../models/flashcard.dart';
 import '../models/vocabulary.dart';
 import 'database_service.dart';
@@ -111,6 +112,69 @@ class SRSService {
 
     // Create rich context flashcard
     return createFlashcard(vocab);
+  }
+
+  /// Add a word the user wants to study. If the word already exists,
+  /// updates its fields and ensures a flashcard is present.
+  Future<VocabularyItem> addOrUpdateWord({
+    required String word,
+    required String translation,
+    String? phonetic,
+    String? partOfSpeech,
+    String? exampleSentence,
+    String? exampleTranslation,
+    CEFRLevel cefrLevel = CEFRLevel.a1,
+  }) async {
+    final existing = await db.findVocabulary(word);
+    if (existing != null) {
+      final updated = existing.copyWith(
+        word: word,
+        translation: translation,
+        phonetic: phonetic,
+        partOfSpeech: partOfSpeech,
+        exampleSentence: exampleSentence,
+        exampleTranslation: exampleTranslation,
+        cefrLevel: cefrLevel,
+      );
+      await db.saveVocabulary(updated);
+      // Ensure a flashcard exists for this vocab.
+      final card = await db.getFlashcardForVocabulary(updated.id);
+      if (card == null) await createFlashcard(updated);
+      return updated;
+    }
+
+    final vocab = VocabularyItem(
+      word: word,
+      translation: translation,
+      phonetic: phonetic,
+      partOfSpeech: partOfSpeech,
+      exampleSentence: exampleSentence,
+      exampleTranslation: exampleTranslation,
+      cefrLevel: cefrLevel,
+    );
+    await db.saveVocabulary(vocab);
+    await createFlashcard(vocab);
+    return vocab;
+  }
+
+  /// Delete a vocabulary item and its flashcard.
+  Future<void> deleteVocabulary(String vocabularyId) async {
+    await db.deleteVocabulary(vocabularyId);
+  }
+
+  /// Reset a flashcard's SM-2 progress so it re-enters the learning queue.
+  Future<void> resetCard(String vocabularyId) async {
+    final card = await db.getFlashcardForVocabulary(vocabularyId);
+    if (card == null) return;
+    final reset = Flashcard(
+      id: card.id,
+      vocabularyId: card.vocabularyId,
+      front: card.front,
+      back: card.back,
+      contextSentence: card.contextSentence,
+      contextTranslation: card.contextTranslation,
+    );
+    await db.saveFlashcard(reset);
   }
 }
 
