@@ -1,7 +1,15 @@
 # Zaban — AI English Tutor: Python dependencies
 # Installed into .venv/ by setup.bat
 
-# Speech-to-Text (Whisper model via CTranslate2)
+# Speech-to-Text — primary: Moonshine v2 (English-only, ~100ms CPU latency,
+# 6.65% WER on LibriSpeech clean, ONNX-quantised, no GPU needed).
+# `useful-moonshine-onnx` ships ONNX weights + the Python wrapper; no torch.
+# useful-moonshine-onnx pulls in its own librosa + onnxruntime + tokenizers
+# + huggingface-hub + numba transitively — no extra pins needed here.
+useful-moonshine-onnx>=20251121
+
+# Speech-to-Text — fallback: Whisper via CTranslate2 (kept so users who can't
+# install moonshine-onnx can still transcribe, and for regression comparisons).
 faster-whisper>=1.0
 
 # Text-to-Speech (Kokoro — MOS 4.2, Apache 2.0)

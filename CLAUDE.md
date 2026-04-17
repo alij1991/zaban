@@ -6,7 +6,7 @@ This file is auto-loaded into every Claude Code session in this repo. Keep it fo
 
 ## What this project is
 
-**Zaban** — an offline desktop English tutor for Persian (Farsi) speakers. Flutter Desktop (Windows), with local LLMs (Ollama / llama.cpp / flutter_gemma), Whisper STT, and Kokoro TTS. Nothing calls out to any cloud — all inference runs on the user's machine.
+**Zaban** — an offline desktop English tutor for Persian (Farsi) speakers. Flutter Desktop (Windows), with local LLMs (Ollama / llama.cpp / flutter_gemma), Moonshine v2 STT (Whisper fallback), and Kokoro TTS. Nothing calls out to any cloud — all inference runs on the user's machine.
 
 Target user profile: adult Persian speaker, CEFR A1–C1, laptop-class hardware (8–16 GB RAM, often weak or no GPU).
 
@@ -27,7 +27,7 @@ lib/
     llm_service.dart         high-level CEFR-adaptive chat API (system prompts, context window, temperature per level)
     sentence_tts_player.dart  streaming sentence-chunked TTS + gap-free playback queue
     tts_service.dart         HTTP client for Kokoro/Piper
-    whisper_transcription_service.dart  HTTP client for Whisper server
+    whisper_transcription_service.dart  HTTP client for STT server (Moonshine/Whisper — name kept for historical reasons)
     audio_service.dart       microphone recording (`record` package)
     database_service.dart    SQLite (sqflite_ffi), schema migrations, WAL mode
     cefr_service.dart        CEFR-J word list lookup, token-miss-rate
@@ -41,9 +41,10 @@ lib/
   utils/                     persian_utils (digit/direction helpers), phoneme_mappings
 
 scripts/
-  whisper_server.py          faster-whisper HTTP server on :9000
+  moonshine_server.py        Moonshine v2 STT HTTP server on :8000 — DEFAULT
+  whisper_server.py          faster-whisper HTTP server on :8000 — FALLBACK when moonshine-onnx not installed
   kokoro_tts_server.py       Kokoro HTTP server on :8880 (warmed on startup)
-  start_services.bat         launches all 3 sidecars (Ollama + Whisper + Kokoro)
+  start_services.bat         launches all 3 sidecars (Ollama + Moonshine/Whisper + Kokoro)
   fetch_llama_dlls.bat       downloads prebuilt llama.cpp DLLs from GitHub Release
 
 windows/                     Flutter Windows runner (stock) + CMake customizations
@@ -123,7 +124,7 @@ setup.bat                       # creates .venv, installs Python deps, fetches D
 ollama pull gemma3:1b           # pull a small LLM
 
 # Every session
-scripts\start_services.bat      # starts Whisper + Kokoro (+ Ollama if needed)
+scripts\start_services.bat      # starts Moonshine/Whisper + Kokoro (+ Ollama if needed)
 flutter run -d windows          # run the app
 ```
 
@@ -160,7 +161,7 @@ Tests: `flutter test` (sparse — mostly smoke). Static: `flutter analyze` (keep
 |---|---|
 | "Connection refused" on LLM | Is Ollama running? `ollama list` — if empty, `ollama pull gemma3:1b` |
 | TTS silent | Is Kokoro running? Watch the `start_services.bat` console for `[OK] Pipeline warm.` |
-| Voice input transcribes nothing | Whisper on `:9000`. Check console. Check mic is default recording device. |
+| Voice input transcribes nothing | Moonshine (or Whisper fallback) on `:8000`. Check console. Check mic is default recording device. If `moonshine_onnx` import fails, reinstall: `.venv\Scripts\pip install useful-moonshine-onnx` |
 | "llama.dll not found" | `scripts\fetch_llama_dlls.bat` |
 | Gemma says "Active model is no longer installed" | Path normalization bug — re-verify `.replaceAll('\\', '/')` is in place |
 | Status bar orange | Primary backend failed → on Ollama fallback. Hover/check `_backendStatus.error` |

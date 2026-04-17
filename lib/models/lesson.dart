@@ -45,8 +45,8 @@ class LessonProgress {
     required this.scenarioId,
     this.completedCount = 0,
     this.bestScore,
-    DateTime? lastAttempt,
-  }) : lastAttempt = lastAttempt;
+    this.lastAttempt,
+  });
 
   final String scenarioId;
   int completedCount;

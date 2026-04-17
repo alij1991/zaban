@@ -165,20 +165,24 @@ class _VoiceInputButtonState extends State<VoiceInputButton>
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('To enable voice input, start a local Whisper server:'),
+            const Text('To enable voice input, start the local STT server '
+                '(Moonshine v2 — ~100ms CPU latency):'),
             const SizedBox(height: 12),
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: Colors.grey.shade900,
+                color: const Color(0xFF1E1E2E),
                 borderRadius: BorderRadius.circular(6),
               ),
               child: const SelectableText(
-                'pip install faster-whisper-server\nfaster-whisper-server',
+                'scripts\\start_services.bat\n'
+                '# or manually:\n'
+                '.venv\\Scripts\\pip install useful-moonshine-onnx\n'
+                '.venv\\Scripts\\python scripts\\moonshine_server.py',
                 style: TextStyle(
                   fontFamily: 'Consolas',
-                  color: Colors.greenAccent,
+                  color: Color(0xFF50FA7B),
                   fontSize: 13,
                 ),
               ),
@@ -187,7 +191,7 @@ class _VoiceInputButtonState extends State<VoiceInputButton>
             Directionality(
               textDirection: TextDirection.rtl,
               child: Text(
-                'برای فعال‌سازی ورودی صوتی، یک سرور Whisper محلی راه‌اندازی کنید.',
+                'برای فعال‌سازی ورودی صوتی، سرور محلی STT (Moonshine) را راه‌اندازی کنید.',
                 style: TextStyle(
                   color: Colors.grey.shade600,
                   fontSize: 13,

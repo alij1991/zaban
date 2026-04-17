@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import '../../models/cefr_level.dart';
 import '../../models/hardware_tier.dart';
 import '../../models/hf_model.dart';
+import '../../models/llm_model_catalog.dart';
 import '../../models/user_profile.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/llm_backend.dart';
@@ -155,7 +156,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
             // Preferences
             _SectionHeader(title: 'Preferences', titleFa: 'ترجیحات'),
             const SizedBox(height: 12),
+            // Dark mode selector
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Theme'),
+              subtitle: Directionality(
+                textDirection: TextDirection.rtl,
+                child: Text('پوسته برنامه',
+                    style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurface.withAlpha(150))),
+              ),
+              trailing: SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(
+                    value: 'light',
+                    icon: Icon(Icons.light_mode, size: 18),
+                    label: Text('Light'),
+                  ),
+                  ButtonSegment(
+                    value: 'system',
+                    icon: Icon(Icons.brightness_auto, size: 18),
+                    label: Text('Auto'),
+                  ),
+                  ButtonSegment(
+                    value: 'dark',
+                    icon: Icon(Icons.dark_mode, size: 18),
+                    label: Text('Dark'),
+                  ),
+                ],
+                selected: {profile.themeMode},
+                onSelectionChanged: (s) => settings.setThemeMode(s.first),
+                style: const ButtonStyle(
+                  visualDensity: VisualDensity.compact,
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
             SwitchListTile(
+              contentPadding: EdgeInsets.zero,
               title: const Text('Show Persian translations'),
               subtitle: Directionality(
                 textDirection: TextDirection.rtl,
@@ -169,6 +207,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               },
             ),
             SwitchListTile(
+              contentPadding: EdgeInsets.zero,
               title: const Text('Prefer Finglish input'),
               subtitle: Directionality(
                 textDirection: TextDirection.rtl,
@@ -181,6 +220,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 settings.updateProfile(profile);
               },
             ),
+            const SizedBox(height: 24),
+
+            // HuggingFace Token (gated models + higher rate limits)
+            _SectionHeader(title: 'HuggingFace Access', titleFa: 'دسترسی HuggingFace'),
+            const SizedBox(height: 12),
+            _HuggingFaceTokenField(settings: settings, profile: profile),
             const SizedBox(height: 24),
 
             // === AI MODEL SECTION ===
@@ -410,7 +455,13 @@ class _OllamaPanel extends StatelessWidget {
               const SizedBox(height: 12),
               _TerminalHelp(commands: [
                 ('Start Ollama:', 'ollama serve'),
-                ('Pull a model:', 'ollama pull ${profile.hardwareTier?.recommendedModel ?? "qwen3.5:9b"}'),
+                (
+                  'Pull a model:',
+                  // Suggest the best catalog model for this machine's RAM —
+                  // keeps the hint consistent with the first-run auto-pick.
+                  'ollama pull '
+                      '${LlmModelCatalog.pickForRam(settings.hardware?.systemRamGb).ollamaTag}',
+                ),
               ]),
             ],
             const SizedBox(height: 8),
@@ -700,11 +751,15 @@ class _TerminalHelp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.amber.shade50,
+        color: Theme.of(context).colorScheme.secondaryContainer.withAlpha(80),
         borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.secondary.withAlpha(60),
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -726,14 +781,16 @@ class _TerminalHelp extends StatelessWidget {
                   width: double.infinity,
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: Colors.grey.shade900,
+                    color: isDark
+                        ? Colors.black.withAlpha(180)
+                        : const Color(0xFF1E1E2E),
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: SelectableText(
                     c.$2,
                     style: const TextStyle(
                       fontFamily: 'Consolas',
-                      color: Colors.greenAccent,
+                      color: Color(0xFF50FA7B), // Dracula green — works light & dark
                       fontSize: 13,
                     ),
                   ),
@@ -781,6 +838,10 @@ class _ModelDownloadSectionState extends State<_ModelDownloadSection> {
   @override
   void initState() {
     super.initState();
+    // Wire the HF token from SettingsProvider so gated model downloads work.
+    final token =
+        context.read<SettingsProvider>().profile.huggingFaceToken;
+    _hfService.token = token;
     _downloadManager = ModelDownloadManager(hfService: _hfService);
     _progressSub = _downloadManager.progressStream.listen((progress) {
       setState(() => _currentDownload = progress);
@@ -958,7 +1019,7 @@ class _ModelDownloadSectionState extends State<_ModelDownloadSection> {
              _currentDownload!.state == DownloadState.pending)) ...[
           const SizedBox(height: 12),
           Card(
-            color: Colors.blue.shade50,
+            color: theme.colorScheme.primaryContainer.withAlpha(80),
             child: Padding(
               padding: const EdgeInsets.all(12),
               child: Column(
@@ -1011,7 +1072,7 @@ class _ModelDownloadSectionState extends State<_ModelDownloadSection> {
         if (_currentDownload?.state == DownloadState.completed) ...[
           const SizedBox(height: 8),
           Card(
-            color: Colors.green.shade50,
+            color: Colors.green.withAlpha(20),
             child: Padding(
               padding: const EdgeInsets.all(12),
               child: Row(
@@ -1322,6 +1383,85 @@ class _RecommendedModels extends StatelessWidget {
           ),
         )),
       ],
+    );
+  }
+}
+
+// === HuggingFace Token Field ===
+
+class _HuggingFaceTokenField extends StatefulWidget {
+  const _HuggingFaceTokenField({
+    required this.settings,
+    required this.profile,
+  });
+  final SettingsProvider settings;
+  final UserProfile profile;
+
+  @override
+  State<_HuggingFaceTokenField> createState() =>
+      _HuggingFaceTokenFieldState();
+}
+
+class _HuggingFaceTokenFieldState extends State<_HuggingFaceTokenField> {
+  late final TextEditingController _ctrl;
+  bool _obscure = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = TextEditingController(
+      text: widget.profile.huggingFaceToken ?? '',
+    );
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Required only for gated models (e.g. Llama). '
+              'Get your token at huggingface.co/settings/tokens.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withAlpha(150),
+                  ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _ctrl,
+              obscureText: _obscure,
+              decoration: InputDecoration(
+                labelText: 'HuggingFace Token (optional)',
+                hintText: 'hf_...',
+                prefixIcon: const Icon(Icons.key),
+                suffixIcon: IconButton(
+                  icon: Icon(
+                    _obscure ? Icons.visibility : Icons.visibility_off,
+                  ),
+                  onPressed: () => setState(() => _obscure = !_obscure),
+                  tooltip: _obscure ? 'Show token' : 'Hide token',
+                ),
+              ),
+              onSubmitted: (v) {
+                widget.profile.huggingFaceToken = v.trim().isEmpty ? null : v.trim();
+                widget.settings.updateProfile(widget.profile);
+              },
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

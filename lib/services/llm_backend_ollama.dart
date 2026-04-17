@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'llm_backend.dart';
 
@@ -119,7 +120,13 @@ class OllamaBackend implements LLMBackend {
           if (content.isNotEmpty) yield content;
         }
         if (data['done'] == true) break;
-      } catch (_) {}
+      } catch (e) {
+        // A malformed JSON line during streaming is unusual but recoverable:
+        // Ollama occasionally emits keep-alive whitespace. Log at debug level
+        // and keep reading the rest of the stream.
+        debugPrint('Ollama: skipped malformed stream chunk: $e '
+            '(first 120 chars: ${chunk.substring(0, chunk.length.clamp(0, 120))})');
+      }
     }
   }
 

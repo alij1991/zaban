@@ -13,7 +13,7 @@ scripts\start_services.bat
 flutter run -d windows
 ```
 
-All Python packages (Whisper STT, Kokoro TTS) are installed into a local `.venv/` virtual environment — not your global Python. The `start_services.bat` script runs everything from the venv automatically.
+All Python packages (Moonshine/Whisper STT, Kokoro TTS) are installed into a local `.venv/` virtual environment — not your global Python. The `start_services.bat` script runs everything from the venv automatically.
 
 ## Prerequisites
 
@@ -51,11 +51,23 @@ Recommended: Gemma 4 E4B LiteRT-LM (~1.5 GB)
 
 ## Speech-to-Text Setup
 
+Primary engine: **Moonshine v2** — English-only, ~100ms CPU latency, no GPU needed.
+`setup.bat` installs it into `.venv/` for you. Manual install:
+
 ```batch
-pip install faster-whisper-server
-faster-whisper-server
+.venv\Scripts\pip install useful-moonshine-onnx
+.venv\Scripts\python scripts\moonshine_server.py --port 8000
 ```
-Runs on port 8000. The app auto-detects when available.
+
+Fallback engine: **faster-whisper** (same port, same API). `start_services.bat`
+automatically uses it if `moonshine-onnx` is unavailable:
+
+```batch
+.venv\Scripts\pip install faster-whisper
+.venv\Scripts\python scripts\whisper_server.py --port 8000 --model small
+```
+
+Either runs on port 8000. The app auto-detects when available.
 
 ## Text-to-Speech Setup
 
@@ -76,7 +88,7 @@ The app auto-detects your GPU and recommends the best model for your VRAM.
 | Service | Port | URL |
 |---------|------|-----|
 | Ollama | 11434 | http://localhost:11434 |
-| Whisper STT | 8000 | http://localhost:8000 |
+| Moonshine/Whisper STT | 8000 | http://localhost:8000 |
 | Kokoro TTS | 8880 | http://localhost:8880 |
 
 ## Troubleshooting
@@ -84,7 +96,7 @@ The app auto-detects your GPU and recommends the best model for your VRAM.
 | Problem | Solution |
 |---------|----------|
 | "Ollama not running" | Run `ollama serve` |
-| Voice input not working | Run `faster-whisper-server` on port 8000 |
+| Voice input not working | Run `scripts\start_services.bat` or `.venv\Scripts\python scripts\moonshine_server.py` on port 8000 |
 | No audio playback | Run `python -m kokoro.serve --port 8880` |
 | Model too slow | Use smaller model or check GPU detection in Settings |
 | Build fails | Run `flutter clean && flutter pub get` |

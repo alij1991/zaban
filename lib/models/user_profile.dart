@@ -26,9 +26,17 @@ class UserProfile {
     this.totalMinutes = 0,
     this.currentStreak = 0,
     this.longestStreak = 0,
-    DateTime? lastActiveDate,
+    this.lastActiveDate,
     this.vocabularyCount = 0,
-  }) : lastActiveDate = lastActiveDate;
+    // FSRS settings
+    this.srsTargetRetention = 0.85,
+    this.srsDailyNewLimit = 5,
+    // Streak freeze
+    this.streakFreezeAvailable = 1,
+    this.streakFreezeUsedToday = false,
+    // Appearance
+    this.themeMode = 'system',
+  });
 
   String? name;
   String? nameFa;
@@ -59,6 +67,18 @@ class UserProfile {
   DateTime? lastActiveDate;
   int vocabularyCount;
 
+  // FSRS settings — exposed in Settings so power users can tune
+  double srsTargetRetention; // 0.70–0.97, default 0.85 (85 %)
+  int srsDailyNewLimit;      // new cards per day, default 5
+
+  // Streak freeze mechanic (research: single highest-ROI engagement feature)
+  // One freeze is available by default; refills after 7 consecutive days.
+  int streakFreezeAvailable;  // number of freezes banked (0 or 1)
+  bool streakFreezeUsedToday; // consumed a freeze in today's update
+
+  // Appearance ('light', 'dark', 'system')
+  String themeMode;
+
   Map<String, dynamic> toMap() => {
     'name': name,
     'name_fa': nameFa,
@@ -84,6 +104,11 @@ class UserProfile {
     'longest_streak': longestStreak,
     'last_active_date': lastActiveDate?.toIso8601String(),
     'vocabulary_count': vocabularyCount,
+    'srs_target_retention': srsTargetRetention,
+    'srs_daily_new_limit': srsDailyNewLimit,
+    'streak_freeze_available': streakFreezeAvailable,
+    'streak_freeze_used_today': streakFreezeUsedToday ? 1 : 0,
+    'theme_mode': themeMode,
   };
 
   factory UserProfile.fromMap(Map<String, dynamic> map) => UserProfile(
@@ -119,6 +144,13 @@ class UserProfile {
         ? DateTime.parse(map['last_active_date'] as String)
         : null,
     vocabularyCount: map['vocabulary_count'] as int? ?? 0,
+    srsTargetRetention:
+        (map['srs_target_retention'] as num?)?.toDouble() ?? 0.85,
+    srsDailyNewLimit: map['srs_daily_new_limit'] as int? ?? 5,
+    streakFreezeAvailable: map['streak_freeze_available'] as int? ?? 1,
+    streakFreezeUsedToday:
+        (map['streak_freeze_used_today'] as int? ?? 0) == 1,
+    themeMode: map['theme_mode'] as String? ?? 'system',
   );
 }
 

@@ -10,7 +10,7 @@ import argparse
 import json
 import os
 import tempfile
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from io import BytesIO
 
 # Parse command line args early
@@ -114,7 +114,11 @@ class WhisperHandler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    server = HTTPServer((args.host, args.port), WhisperHandler)
+    # ThreadingHTTPServer spawns a worker thread per request so a large upload
+    # (e.g. 30s WAV) can't head-of-line-block a short /v1/models health check
+    # or another transcription. faster-whisper releases the GIL during the C++
+    # inference hot path, so this genuinely parallelises.
+    server = ThreadingHTTPServer((args.host, args.port), WhisperHandler)
     print(f"\nWhisper STT server listening on http://{args.host}:{args.port}")
     print(f"  POST /v1/audio/transcriptions — transcribe audio")
     print(f"  GET  /v1/models — list models")

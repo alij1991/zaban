@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/settings_provider.dart';
+import '../../services/llm_backend.dart';
 import '../../providers/srs_provider.dart';
 import '../../widgets/cefr_badge.dart';
 import '../../widgets/model_status_indicator.dart';
@@ -9,6 +10,7 @@ import '../lessons/lessons_screen.dart';
 import '../vocabulary/vocabulary_screen.dart';
 import '../pronunciation/pronunciation_screen.dart';
 import '../settings/settings_screen.dart';
+import '../progress/progress_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -120,6 +122,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 label: Text('Speak'),
               ),
               NavigationRailDestination(
+                icon: Icon(Icons.bar_chart_outlined),
+                selectedIcon: Icon(Icons.bar_chart),
+                label: Text('Progress'),
+              ),
+              NavigationRailDestination(
                 icon: Icon(Icons.settings_outlined),
                 selectedIcon: Icon(Icons.settings),
                 label: Text('Settings'),
@@ -147,7 +154,8 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       3 => const VocabularyScreen(),
       4 => const PronunciationScreen(),
-      5 => const SettingsScreen(),
+      5 => const ProgressScreen(),
+      6 => const SettingsScreen(),
       _ => const Center(child: Text('Page not found')),
     };
   }
@@ -315,50 +323,7 @@ class _DashboardPage extends StatelessWidget {
 
           // Connection status
           if (settings.backendStatus != null && !settings.backendStatus!.isReady)
-            Card(
-              color: Colors.red.shade50,
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  children: [
-                    const Icon(Icons.warning_amber_rounded, color: Colors.red),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Ollama is not running',
-                            style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                              color: Colors.red.shade900,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Start Ollama to enable AI conversations. Run: ollama serve',
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                          const SizedBox(height: 2),
-                          Directionality(
-                            textDirection: TextDirection.rtl,
-                            child: Text(
-                              'برای فعال‌سازی مکالمات هوش مصنوعی، Ollama را اجرا کنید: ollama serve',
-                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: Colors.red.shade700,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    ElevatedButton(
-                      onPressed: () => settings.refreshBackendStatus(),
-                      child: const Text('Retry'),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+            _BackendErrorCard(settings: settings),
         ],
       ),
     );
@@ -422,6 +387,91 @@ class _QuickActionCard extends StatelessWidget {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Backend-specific error card — never hardcodes "Ollama" for non-Ollama users.
+class _BackendErrorCard extends StatelessWidget {
+  const _BackendErrorCard({required this.settings});
+  final SettingsProvider settings;
+
+  @override
+  Widget build(BuildContext context) {
+    final backendType = settings.profile.backendType;
+    final error = settings.backendStatus?.error ?? '';
+
+    final (title, hint, hintFa) = switch (backendType) {
+      BackendType.ollama => (
+          'AI backend not connected',
+          'Make sure Ollama is running: ollama serve',
+          'اطمینان حاصل کنید Ollama در حال اجرا است: ollama serve',
+        ),
+      BackendType.directFfi => (
+          'Direct GGUF backend failed',
+          'Check the model path in Settings → AI Model.',
+          'مسیر مدل را در تنظیمات بررسی کنید.',
+        ),
+      BackendType.gemma => (
+          'Gemma backend failed',
+          'Check the Gemma model path in Settings, or switch to Ollama.',
+          'مسیر مدل Gemma را بررسی کنید یا به Ollama تغییر دهید.',
+        ),
+    };
+
+    return Card(
+      color: Colors.red.withAlpha(20),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            const Icon(Icons.warning_amber_rounded, color: Colors.red),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          color: Colors.red.shade900,
+                        ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(hint,
+                      style: Theme.of(context).textTheme.bodySmall),
+                  const SizedBox(height: 2),
+                  Directionality(
+                    textDirection: TextDirection.rtl,
+                    child: Text(
+                      hintFa,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Colors.red.shade700,
+                          ),
+                    ),
+                  ),
+                  if (error.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      error,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Colors.red.shade400,
+                            fontStyle: FontStyle.italic,
+                          ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            ElevatedButton(
+              onPressed: settings.refreshBackendStatus,
+              child: const Text('Retry'),
+            ),
+          ],
         ),
       ),
     );

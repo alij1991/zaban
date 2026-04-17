@@ -1,7 +1,9 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart' show ThemeMode;
 import 'package:http/http.dart' as http;
 import '../models/hardware_tier.dart';
+import '../models/llm_model_catalog.dart';
 import '../models/user_profile.dart';
 import '../models/cefr_level.dart';
 import '../services/database_service.dart';
@@ -41,7 +43,17 @@ class SettingsProvider extends ChangeNotifier {
     if (_profile.hardwareTier == null) {
       _hardware = await HardwareDetectionService.detect();
       _profile.hardwareTier = _hardware!.tier;
-      _profile.selectedModel = _hardware!.tier.recommendedModel;
+      // RAM-aware default: pick the biggest catalog model that fits current
+      // total RAM (Qwen3-4B if ≥ 8 GB, Qwen3-1.7B if ≥ 4 GB, Gemma3:1b
+      // otherwise). Falls back to the VRAM-tier recommendation if RAM
+      // detection failed — never nothing.
+      final picked = LlmModelCatalog.pickForRam(_hardware!.systemRamGb);
+      _profile.selectedModel = picked.ollamaTag;
+      debugPrint(
+        'First-run model pick: ${picked.displayName} (${picked.ollamaTag}) '
+        '— total RAM: ${_hardware!.systemRamGb?.toStringAsFixed(1) ?? "unknown"} GB, '
+        'threshold: ${picked.minRamGb} GB, VRAM tier: ${_hardware!.tier.name}',
+      );
       await db.saveUserProfile(_profile);
     }
 
@@ -116,11 +128,16 @@ class SettingsProvider extends ChangeNotifier {
   /// Tell Ollama to unload its model from memory to free RAM.
   Future<void> _unloadOllamaModel() async {
     try {
-      await http.Client().post(
-        Uri.parse('${_profile.ollamaHost}/api/generate'),
-        body: '{"model":"_","keep_alive":0}',
-        headers: {'Content-Type': 'application/json'},
-      ).timeout(const Duration(seconds: 5));
+      // Use the top-level http.post() — it manages its own connection and
+      // does not leak a client, unlike http.Client().post() which requires
+      // an explicit .close() call.
+      await http
+          .post(
+            Uri.parse('${_profile.ollamaHost}/api/generate'),
+            body: '{"model":"_","keep_alive":0}',
+            headers: {'Content-Type': 'application/json'},
+          )
+          .timeout(const Duration(seconds: 5));
     } catch (_) {}
   }
 
@@ -152,7 +169,17 @@ class SettingsProvider extends ChangeNotifier {
 
   Future<void> setHardwareTier(HardwareTier tier) async {
     _profile.hardwareTier = tier;
-    _profile.selectedModel = tier.recommendedModel;
+    // Apply the same RAM-aware pick we use on first run so that re-detecting
+    // hardware doesn't regress the model choice back to something that won't
+    // fit. If no RAM reading exists yet (user changed tier manually without
+    // running detection), trigger detection so we have a number to pick from.
+    _hardware ??= await HardwareDetectionService.detect();
+    final picked = LlmModelCatalog.pickForRam(_hardware?.systemRamGb);
+    _profile.selectedModel = picked.ollamaTag;
+    debugPrint(
+      'Tier change → model pick: ${picked.displayName} (${picked.ollamaTag}) '
+      '— total RAM: ${_hardware?.systemRamGb?.toStringAsFixed(1) ?? "unknown"} GB',
+    );
     await db.saveUserProfile(_profile);
     if (_profile.backendType == BackendType.ollama) {
       await switchBackend(BackendType.ollama);
@@ -170,9 +197,34 @@ class SettingsProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Flutter ThemeMode derived from the persisted string preference.
+  ThemeMode get themeMode => switch (_profile.themeMode) {
+    'light' => ThemeMode.light,
+    'dark' => ThemeMode.dark,
+    _ => ThemeMode.system,
+  };
+
+  /// Persist a new theme mode ('light', 'dark', or 'system').
+  Future<void> setThemeMode(String mode) async {
+    _profile.themeMode = mode;
+    await db.saveUserProfile(_profile);
+    notifyListeners();
+  }
+
+  /// Update the daily streak, applying a streak freeze if the user missed
+  /// exactly one day and has a freeze banked.
+  ///
+  /// Streak freeze rules (research-backed: single highest-ROI retention feature):
+  ///   • 1 freeze is available by default.
+  ///   • A freeze is consumed automatically when the user misses 1 day.
+  ///   • After 7 consecutive active days the freeze refills (max 1).
+  ///   • Missing > 1 day: streak resets even if a freeze is available.
   Future<void> updateStreak() async {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
+
+    // Reset the "used today" flag at the start of a new day
+    _profile.streakFreezeUsedToday = false;
 
     if (_profile.lastActiveDate != null) {
       final lastActive = DateTime(
@@ -181,9 +233,22 @@ class SettingsProvider extends ChangeNotifier {
         _profile.lastActiveDate!.day,
       );
       final diff = today.difference(lastActive).inDays;
-      if (diff == 1) {
+
+      if (diff == 0) {
+        // Already checked in today — no change needed
+      } else if (diff == 1) {
+        // Perfect streak continuation
         _profile.currentStreak++;
+      } else if (diff == 2 && _profile.streakFreezeAvailable > 0) {
+        // Missed exactly 1 day — use freeze to protect streak
+        _profile.currentStreak++;
+        _profile.streakFreezeAvailable =
+            (_profile.streakFreezeAvailable - 1).clamp(0, 1);
+        _profile.streakFreezeUsedToday = true;
+        debugPrint('Streak freeze consumed — streak protected at '
+            '${_profile.currentStreak} days');
       } else if (diff > 1) {
+        // Too many days missed — reset streak
         _profile.currentStreak = 1;
       }
     } else {
@@ -192,6 +257,14 @@ class SettingsProvider extends ChangeNotifier {
 
     if (_profile.currentStreak > _profile.longestStreak) {
       _profile.longestStreak = _profile.currentStreak;
+    }
+
+    // Refill freeze after 7 consecutive active days (max 1)
+    if (_profile.currentStreak > 0 &&
+        _profile.currentStreak % 7 == 0 &&
+        _profile.streakFreezeAvailable == 0) {
+      _profile.streakFreezeAvailable = 1;
+      debugPrint('Streak freeze refilled at ${_profile.currentStreak}-day streak');
     }
 
     _profile.lastActiveDate = now;
@@ -204,7 +277,7 @@ class SettingsProvider extends ChangeNotifier {
   /// is running, regardless of which backend the user selected.
   Future<void> _fallbackToOllama({String? originalError}) async {
     try {
-      final response = await http.Client()
+      final response = await http
           .get(Uri.parse('${_profile.ollamaHost}/api/tags'))
           .timeout(const Duration(seconds: 5));
       if (response.statusCode != 200) return;
@@ -259,7 +332,7 @@ class SettingsProvider extends ChangeNotifier {
   /// the first available chat model.
   Future<void> _validateOllamaModel() async {
     try {
-      final response = await http.Client()
+      final response = await http
           .get(Uri.parse('${_profile.ollamaHost}/api/tags'))
           .timeout(const Duration(seconds: 5));
       if (response.statusCode != 200) return;

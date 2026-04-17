@@ -32,7 +32,7 @@ class DatabaseService {
     final db = await databaseFactory.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 3,
+        version: 6,
         onCreate: _createTables,
         onUpgrade: _upgradeTables,
         onOpen: (db) async {
@@ -75,7 +75,12 @@ class DatabaseService {
         current_streak INTEGER DEFAULT 0,
         longest_streak INTEGER DEFAULT 0,
         last_active_date TEXT,
-        vocabulary_count INTEGER DEFAULT 0
+        vocabulary_count INTEGER DEFAULT 0,
+        srs_target_retention REAL DEFAULT 0.85,
+        srs_daily_new_limit INTEGER DEFAULT 5,
+        streak_freeze_available INTEGER DEFAULT 1,
+        streak_freeze_used_today INTEGER DEFAULT 0,
+        theme_mode TEXT DEFAULT 'system'
       )
     ''');
 
@@ -161,6 +166,12 @@ class DatabaseService {
     batch.execute('''
       CREATE INDEX idx_flashcards_next_review ON flashcards(next_review)
     ''');
+    // Lookup flashcards by the vocabulary row they belong to — used by
+    // getFlashcardForVocabulary (reset / edit paths). Without this index
+    // SQLite table-scans the flashcards table on every vocab edit.
+    batch.execute('''
+      CREATE INDEX idx_flashcards_vocabulary_id ON flashcards(vocabulary_id)
+    ''');
     batch.execute('''
       CREATE INDEX idx_vocabulary_word ON vocabulary(word COLLATE NOCASE)
     ''');
@@ -182,6 +193,54 @@ class DatabaseService {
     }
     if (oldVersion < 3) {
       await db.execute('ALTER TABLE messages ADD COLUMN corrections_json TEXT');
+    }
+    if (oldVersion < 4) {
+      // FSRS fields on flashcards (stability + difficulty replace SM-2 ease_factor)
+      // Existing cards default to stability=0/difficulty=5 → treated as new, safe fallback.
+      await db.execute(
+        'ALTER TABLE flashcards ADD COLUMN stability REAL DEFAULT 0.0',
+      );
+      await db.execute(
+        'ALTER TABLE flashcards ADD COLUMN difficulty REAL DEFAULT 5.0',
+      );
+      // Migrate existing cards: approximate stability from SM-2 interval
+      // Cards with repetitions>0 get stability ≈ their current interval,
+      // since at 85% target retention interval ≈ stability is close enough.
+      await db.execute('''
+        UPDATE flashcards
+        SET stability = CAST(interval AS REAL),
+            difficulty = MAX(1.0, MIN(10.0, (3.5 - ease_factor) * 2.5 + 5.0))
+        WHERE repetitions > 0
+      ''');
+
+      // FSRS settings + streak freeze on user_profile
+      await db.execute(
+        'ALTER TABLE user_profile ADD COLUMN srs_target_retention REAL DEFAULT 0.85',
+      );
+      await db.execute(
+        'ALTER TABLE user_profile ADD COLUMN srs_daily_new_limit INTEGER DEFAULT 5',
+      );
+      await db.execute(
+        'ALTER TABLE user_profile ADD COLUMN streak_freeze_available INTEGER DEFAULT 1',
+      );
+      await db.execute(
+        'ALTER TABLE user_profile ADD COLUMN streak_freeze_used_today INTEGER DEFAULT 0',
+      );
+    }
+    if (oldVersion < 5) {
+      // App appearance preference
+      await db.execute(
+        "ALTER TABLE user_profile ADD COLUMN theme_mode TEXT DEFAULT 'system'",
+      );
+    }
+    if (oldVersion < 6) {
+      // Missing index on flashcards.vocabulary_id — the FK existed from v1
+      // but without an index every vocab edit/reset table-scanned flashcards.
+      // CREATE INDEX IF NOT EXISTS in case a user's DB was manually patched.
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_flashcards_vocabulary_id '
+        'ON flashcards(vocabulary_id)',
+      );
     }
   }
 
@@ -316,6 +375,21 @@ class DatabaseService {
     final results = await db.query(
       'flashcards',
       where: 'next_review <= ?',
+      whereArgs: [now],
+      orderBy: 'next_review ASC',
+      limit: limit,
+    );
+    return results.map((m) => Flashcard.fromMap(m)).toList();
+  }
+
+  /// Cards never reviewed (repetitions=0, next_review in future).
+  /// Used to top-up a session with fresh new cards up to the daily limit.
+  Future<List<Flashcard>> getNewFlashcards({int limit = 10}) async {
+    final db = await database;
+    final now = DateTime.now().toIso8601String();
+    final results = await db.query(
+      'flashcards',
+      where: 'repetitions = 0 AND next_review > ?',
       whereArgs: [now],
       orderBy: 'next_review ASC',
       limit: limit,

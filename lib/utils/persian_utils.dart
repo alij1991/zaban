@@ -94,17 +94,23 @@ String normalizePersian(String text) {
 /// Add Zero-Width Non-Joiner where needed (simplified).
 /// ZWNJ is critical for proper Persian text rendering.
 String addZWNJ(String text) {
-  // Common suffixes that need ZWNJ
-  final patterns = {
-    RegExp(r'(\S)(ها)\b'): r'$1\u200C$2', // plural -ha
-    RegExp(r'(\S)(های)\b'): r'$1\u200C$2', // plural -haye
-    RegExp(r'(\S)(می)\b'): r'$1\u200C$2', // verb prefix mi-
-    RegExp(r'(\S)(نمی)\b'): r'$1\u200C$2', // negative prefix nemi-
-  };
+  // Common suffixes that need ZWNJ.
+  // replaceAllMapped requires a Function(Match) callback — a bare replacement
+  // string with $1/$2 backreferences is NOT supported by Dart and would be
+  // emitted verbatim. Each callback extracts the two capture groups explicitly.
+  final patterns = [
+    RegExp(r'(\S)(ها)\b'), // plural -ha
+    RegExp(r'(\S)(های)\b'), // plural -haye
+    RegExp(r'(\S)(می)\b'), // verb prefix mi-
+    RegExp(r'(\S)(نمی)\b'), // negative prefix nemi-
+  ];
 
   var result = text;
-  for (final entry in patterns.entries) {
-    result = result.replaceAllMapped(entry.key, (m) => entry.value);
+  for (final pattern in patterns) {
+    result = result.replaceAllMapped(
+      pattern,
+      (m) => '${m[1]}\u200C${m[2]}',
+    );
   }
   return result;
 }

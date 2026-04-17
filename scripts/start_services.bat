@@ -35,17 +35,28 @@ if %errorlevel% equ 0 (
     echo   [SKIP] Ollama not installed
 )
 
-:: ---- Start Whisper STT (from venv) ----
+:: ---- Start Speech-to-Text (from venv) ----
+:: Prefer Moonshine v2 (~10x lower CPU latency than Whisper small,
+:: English-only — matches our Persian-speakers-learning-English use case).
+:: Fall back to Whisper if moonshine-onnx isn't installed.
 echo.
 echo [2/3] Starting Speech-to-Text server...
+set "MOONSHINE_SCRIPT=%~dp0moonshine_server.py"
 set "WHISPER_SCRIPT=%~dp0whisper_server.py"
-"%VENV_PYTHON%" -c "from faster_whisper import WhisperModel" >nul 2>&1
+"%VENV_PYTHON%" -c "from moonshine_onnx import MoonshineOnnxModel" >nul 2>&1
 if %errorlevel% equ 0 (
-    start "Whisper STT" /min cmd /c ""%VENV_PYTHON%" "%WHISPER_SCRIPT%" --port 8000 --model small"
-    echo   [OK] Whisper STT started on port 8000 (model: small)
+    start "Moonshine STT" /min cmd /c ""%VENV_PYTHON%" "%MOONSHINE_SCRIPT%" --port 8000 --model moonshine/base"
+    echo   [OK] Moonshine STT started on port 8000 (model: moonshine/base)
 ) else (
-    echo   [SKIP] faster-whisper not installed in .venv
-    echo          Run: .venv\Scripts\pip install faster-whisper
+    "%VENV_PYTHON%" -c "from faster_whisper import WhisperModel" >nul 2>&1
+    if %errorlevel% equ 0 (
+        start "Whisper STT" /min cmd /c ""%VENV_PYTHON%" "%WHISPER_SCRIPT%" --port 8000 --model small"
+        echo   [OK] Whisper STT started on port 8000 (model: small, Moonshine fallback)
+    ) else (
+        echo   [SKIP] No STT backend installed in .venv
+        echo          Run: .venv\Scripts\pip install useful-moonshine-onnx
+        echo          Or fallback: .venv\Scripts\pip install faster-whisper
+    )
 )
 
 :: ---- Start Kokoro TTS (from venv) ----

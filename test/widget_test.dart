@@ -18,7 +18,7 @@ void main() {
     });
   });
 
-  group('Flashcard SM-2', () {
+  group('Flashcard FSRS', () {
     test('successful review increases interval', () {
       final card = Flashcard(
         vocabularyId: 'test',
@@ -26,27 +26,27 @@ void main() {
         back: 'سلام',
       );
 
-      card.review(4); // Good
+      card.review(3); // Good (FSRS grade 3)
       expect(card.repetitions, 1);
-      expect(card.interval, 1);
+      expect(card.scheduledInterval, greaterThanOrEqualTo(1));
 
-      card.review(4); // Good again
+      card.review(3); // Good again
       expect(card.repetitions, 2);
-      expect(card.interval, 6);
+      expect(card.scheduledInterval, greaterThan(1));
     });
 
-    test('failed review resets', () {
+    test('failed review resets repetitions', () {
       final card = Flashcard(
         vocabularyId: 'test',
         front: 'hello',
         back: 'سلام',
         repetitions: 3,
-        interval: 15,
+        scheduledInterval: 15,
       );
 
-      card.review(1); // Failed
+      card.review(1); // Again (FSRS grade 1 = forgotten)
       expect(card.repetitions, 0);
-      expect(card.interval, 1);
+      expect(card.scheduledInterval, greaterThanOrEqualTo(1));
     });
   });
 

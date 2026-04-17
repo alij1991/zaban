@@ -1,33 +1,38 @@
 enum HardwareTier {
+  // NOTE: `recommendedModel` is the VRAM-tier *ceiling* (what could run
+  // comfortably if nothing else competed for memory). The real default is
+  // chosen by `LlmModelCatalog.pickForRam(totalRamGb)` in SettingsProvider —
+  // that picker is what you want to touch when "change the default model"
+  // comes up. These tier strings only matter if RAM detection fails.
   high(
     label: '16 GB+ VRAM',
-    recommendedModel: 'gemma4:26b-a4b',
+    recommendedModel: 'qwen3:8b',
     vramRequired: 15,
-    description: 'Gemma 4 26B-A4B MoE — best quality, ~150 t/s',
+    description: 'Qwen3-8B — strong reasoning, bilingual',
   ),
   medium(
     label: '8 GB VRAM',
-    recommendedModel: 'hf.co/unsloth/Qwen3.5-9B-GGUF:Q4_K_M',
+    recommendedModel: 'qwen3:4b',
     vramRequired: 7,
-    description: 'Qwen3.5-9B — best sub-10B model, 201 languages',
+    description: 'Qwen3-4B — best sub-8B bilingual model',
   ),
   low(
     label: '4–6 GB VRAM',
-    recommendedModel: 'gemma4:e4b',
+    recommendedModel: 'qwen3:4b',
     vramRequired: 4,
-    description: 'Gemma 4 E4B — includes built-in ASR',
+    description: 'Qwen3-4B — fits in 6 GB VRAM with Q4 quant',
   ),
   minimal(
     label: '2 GB VRAM',
-    recommendedModel: 'gemma4:e2b',
+    recommendedModel: 'qwen3:1.7b',
     vramRequired: 1.5,
-    description: 'Gemma 4 E2B — ultralight with ASR',
+    description: 'Qwen3-1.7B — ultralight, still bilingual',
   ),
   cpuOnly(
     label: 'CPU Only',
-    recommendedModel: 'hf.co/unsloth/Qwen3.5-4B-GGUF:Q4_K_M',
+    recommendedModel: 'qwen3:1.7b',
     vramRequired: 0,
-    description: 'Qwen3.5-4B on CPU — 5-15 t/s',
+    description: 'Qwen3-1.7B on CPU — 5-15 t/s; upgrades to Qwen3-4B on 8+ GB RAM',
   );
 
   const HardwareTier({
@@ -42,13 +47,17 @@ enum HardwareTier {
   final double vramRequired;
   final String description;
 
-  bool get hasNativeASR =>
-      this == HardwareTier.low || this == HardwareTier.minimal;
+  /// Kept for backward compat. With the Qwen3 switch, no tier ships with
+  /// a native-audio LLM, so this always returns false. A future Gemma 4 /
+  /// Qwen3-Omni swap could flip this back on for specific tiers.
+  bool get hasNativeASR => false;
 
   String get sttRecommendation {
-    if (hasNativeASR) return 'Built-in (Gemma 4 native audio)';
-    if (this == HardwareTier.cpuOnly) return 'whisper.cpp small (CPU)';
-    return 'faster-whisper turbo INT8';
+    // Moonshine v2 is English-only, ~100ms CPU latency, 6.65% LibriSpeech WER
+    // — comfortably beats Whisper small (~1-2s CPU) for our use case. Falls
+    // back to faster-whisper if moonshine-onnx isn't installed.
+    if (this == HardwareTier.cpuOnly) return 'Moonshine base (CPU ONNX)';
+    return 'Moonshine base (CPU ONNX) + faster-whisper fallback';
   }
 
   String get ttsRecommendation {

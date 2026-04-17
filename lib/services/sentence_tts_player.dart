@@ -148,6 +148,13 @@ class SentenceTtsPlayer {
     }
   }
 
+  /// Ceiling on how long we'll wait for a single sentence's WAV to finish
+  /// playing before assuming the audio player has stalled and advancing to
+  /// the next clip. 60s is very generous: a tutor sentence synthesised by
+  /// Kokoro is almost never >15s of audio. A silent `audioplayers` stall
+  /// previously froze the whole queue for the rest of the session.
+  static const Duration _playbackCompleteTimeout = Duration(seconds: 60);
+
   Future<void> _pumpQueue() async {
     if (_isPlaying || _audioQueue.isEmpty || _disposed) return;
     _isPlaying = true;
@@ -157,8 +164,17 @@ class SentenceTtsPlayer {
       final path = _audioQueue.removeFirst();
       try {
         await _player.play(DeviceFileSource(path));
-        // Wait for this file to finish before starting the next.
-        await _player.onPlayerComplete.first;
+        // Wait for this file to finish before starting the next. Bounded so
+        // a stuck miniaudio backend doesn't wedge the queue forever.
+        await _player.onPlayerComplete.first.timeout(
+          _playbackCompleteTimeout,
+          onTimeout: () {
+            debugPrint('Audio playback stalled on $path after '
+                '${_playbackCompleteTimeout.inSeconds}s — advancing queue.');
+            // Best-effort stop so the next play() call starts clean.
+            _player.stop().catchError((_) {});
+          },
+        );
       } catch (e) {
         debugPrint('Audio playback error: $e');
       }

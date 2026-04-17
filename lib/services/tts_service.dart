@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -25,6 +26,11 @@ class TTSService {
   String _audioDir = '';
   bool _initialized = false;
   final _client = http.Client();
+
+  /// Files currently being written by [_streamSynthToFile] / [synthesize].
+  /// [cleanCache] skips these to avoid racing with an active synth and
+  /// deleting a half-written WAV. Paths are absolute.
+  final Set<String> _inFlightFiles = <String>{};
 
   bool get isInitialized => _initialized;
 
@@ -82,21 +88,32 @@ class TTSService {
         outputPath,
       );
       if (path != null) return path;
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('TTS: streaming endpoint failed, trying /synthesize fallback: $e');
+    }
 
     // Fallback: buffered endpoint.
+    _inFlightFiles.add(outputPath);
     try {
-      final response = await _client.post(
-        Uri.parse('$host/synthesize'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'text': text, 'voice': voice}),
-      ).timeout(const Duration(seconds: 15));
+      final response = await _client
+          .post(
+            Uri.parse('$host/synthesize'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'text': text, 'voice': voice}),
+          )
+          .timeout(const Duration(seconds: 15));
 
       if (response.statusCode == 200 && response.bodyBytes.length > 100) {
         await File(outputPath).writeAsBytes(response.bodyBytes);
         return outputPath;
       }
-    } catch (_) {}
+      debugPrint('TTS: /synthesize returned ${response.statusCode} '
+          '(${response.bodyBytes.length} bytes) — giving up');
+    } catch (e) {
+      debugPrint('TTS: /synthesize fallback failed: $e');
+    } finally {
+      _inFlightFiles.remove(outputPath);
+    }
 
     return null;
   }
@@ -113,6 +130,7 @@ class TTSService {
     if (streamed.statusCode != 200) return null;
 
     final file = File(outputPath);
+    _inFlightFiles.add(outputPath);
     final sink = file.openWrite();
     var total = 0;
     try {
@@ -123,6 +141,7 @@ class TTSService {
       await sink.flush();
     } finally {
       await sink.close();
+      _inFlightFiles.remove(outputPath);
     }
     if (total < 100) {
       // Corrupted / empty response.
@@ -198,11 +217,21 @@ class TTSService {
     final legacyCutoff = now.subtract(const Duration(hours: 1));
     await for (final entity in dir.list()) {
       if (entity is File) {
+        // Skip files currently being written by an in-flight synth, otherwise
+        // we'd race-delete a half-written WAV and the caller would get a
+        // corrupted path back.
+        if (_inFlightFiles.contains(entity.path)) continue;
         final name = p.basename(entity.path);
         final stat = await entity.stat();
         final cutoff = name.startsWith('cache_') ? cacheCutoff : legacyCutoff;
         if (stat.modified.isBefore(cutoff)) {
-          await entity.delete();
+          try {
+            await entity.delete();
+          } catch (e) {
+            // File may have been deleted by another run, or locked by the OS.
+            // Non-fatal — next cleanup pass will retry.
+            debugPrint('TTS cleanCache: could not delete ${entity.path}: $e');
+          }
         }
       }
     }

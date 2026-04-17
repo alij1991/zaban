@@ -39,8 +39,12 @@ void main() async {
   // Warm the Kokoro TTS server on startup — first synthesis after cold
   // start is slow because it lazy-loads the voice embedding + vocoder.
   // Throw away the result; we just want the model resident.
+  final ttsService = TTSService();
   // ignore: discarded_futures
-  TTSService().synthesize('.').then((_) {}).catchError((_) {});
+  ttsService.synthesize('.').then((_) {}).catchError((_) {});
+  // Clean up stale TTS cache files (>7 days old) in the background.
+  // ignore: discarded_futures
+  ttsService.cleanCache().catchError((_) {});
 
   // SettingsProvider owns the LLMService lifecycle.
   // It creates the appropriate backend (Ollama, Direct FFI, or Gemma)
@@ -72,11 +76,24 @@ void main() async {
             );
           },
           update: (_, settings, previous) {
+            // `previous` is null only if create() hasn't run yet (edge case
+            // during provider initialization). Fall back to constructing a
+            // fresh ChatProvider rather than force-unwrapping null.
+            final provider = previous ??
+                ChatProvider(
+                  llmService: settings.llmService,
+                  db: db,
+                  translationService: TranslationService(
+                    llmService: settings.llmService,
+                  ),
+                  cefrService: cefrService,
+                  srsService: srsService,
+                );
             // Update the LLM service reference when backend changes
-            if (previous != null && !settings.isLoading) {
-              previous.llmService = settings.llmService;
+            if (!settings.isLoading) {
+              provider.llmService = settings.llmService;
             }
-            return previous!;
+            return provider;
           },
         ),
         ChangeNotifierProvider(
@@ -96,19 +113,50 @@ class ZabanApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Watch themeMode from SettingsProvider so hot-switching works immediately.
+    final settings = context.watch<SettingsProvider>();
     return MaterialApp(
       title: 'Zaban',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
-      themeMode: ThemeMode.light,
+      themeMode: settings.isLoading ? ThemeMode.system : settings.themeMode,
       home: const _AppShell(),
     );
   }
 }
 
-class _AppShell extends StatelessWidget {
+class _AppShell extends StatefulWidget {
   const _AppShell();
+
+  @override
+  State<_AppShell> createState() => _AppShellState();
+}
+
+class _AppShellState extends State<_AppShell> with WindowListener {
+  @override
+  void initState() {
+    super.initState();
+    // Register for window close so we can flush SQLite WAL before exit.
+    windowManager.addListener(this);
+    windowManager.setPreventClose(true);
+  }
+
+  @override
+  void dispose() {
+    windowManager.removeListener(this);
+    super.dispose();
+  }
+
+  /// Called when the user closes the window (X button / Alt+F4).
+  /// Checkpoints the SQLite WAL and then destroys the window.
+  @override
+  Future<void> onWindowClose() async {
+    // Grab the DatabaseService instance from the Provider tree and close it.
+    // This flushes the SQLite WAL before the process exits.
+    await context.read<DatabaseService>().close();
+    await windowManager.destroy();
+  }
 
   @override
   Widget build(BuildContext context) {

@@ -55,9 +55,12 @@ class LLMBackendFactory {
   static OllamaBackend _createOllama(UserProfile profile) {
     return OllamaBackend(
       host: profile.ollamaHost,
+      // Last-resort default if SettingsProvider never ran RAM detection.
+      // The catalog picker handles the normal path; this just keeps the
+      // factory self-contained for tests and direct instantiation.
       model: profile.selectedModel ??
           profile.hardwareTier?.recommendedModel ??
-          'gemma4:e4b',
+          'qwen3:1.7b',
     );
   }
 }

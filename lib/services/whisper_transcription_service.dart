@@ -3,10 +3,16 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
-/// Transcription service that calls a local Whisper HTTP server.
+/// Transcription service that calls a local STT HTTP server.
+///
+/// Name kept for historical reasons — the actual default backend is now
+/// Moonshine v2 (~100ms CPU latency) served by `scripts/moonshine_server.py`.
+/// The HTTP contract is deliberately identical to our Whisper server so this
+/// client works against either backend unchanged.
 ///
 /// Compatible with:
-/// - Our custom whisper_server.py (scripts/whisper_server.py)
+/// - Moonshine ONNX server (scripts/moonshine_server.py) — DEFAULT
+/// - faster-whisper server (scripts/whisper_server.py) — FALLBACK
 /// - Any OpenAI-compatible /v1/audio/transcriptions endpoint
 /// - whisper.cpp server (/inference endpoint)
 class WhisperTranscriptionService {
@@ -41,7 +47,7 @@ class WhisperTranscriptionService {
     }
 
     final fileSize = await file.length();
-    debugPrint('Whisper: transcribing $audioPath (${fileSize} bytes)');
+    debugPrint('Whisper: transcribing $audioPath ($fileSize bytes)');
 
     if (fileSize < 1000) {
       debugPrint('Whisper: file too small ($fileSize bytes), skipping');

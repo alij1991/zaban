@@ -331,6 +331,129 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ── Post-conversation feedback ────────────────────────────────────────────
+
+  ConversationFeedback? _pendingFeedback;
+  ConversationFeedback? get pendingFeedback => _pendingFeedback;
+
+  bool _isGeneratingFeedback = false;
+  bool get isGeneratingFeedback => _isGeneratingFeedback;
+
+  /// Generate end-of-conversation feedback via a one-shot LLM call.
+  ///
+  /// Surfaces: 2 things the user did well + 1 pattern to improve,
+  /// based on the full conversation transcript. Creates SRS cards for
+  /// recurring errors so they enter the review queue automatically.
+  ///
+  /// Research basis: recasts alone have low uptake (Lyster & Ranta). A
+  /// structured end-of-session summary with explicit correction + Persian
+  /// rule explanation produces measurable retention gains.
+  Future<void> generateConversationFeedback(CEFRLevel level) async {
+    if (_currentConversation == null ||
+        _isGeneratingFeedback ||
+        _isGenerating) {
+      return;
+    }
+
+    // Need at least 2 user turns for meaningful feedback
+    final userMessages =
+        messages.where((m) => m.role == MessageRole.user).toList();
+    if (userMessages.length < 2) return;
+
+    _isGeneratingFeedback = true;
+    notifyListeners();
+
+    try {
+      // Build a compact transcript (last 10 exchanges to stay within context)
+      final recent = messages.length > 20 ? messages.sublist(messages.length - 20) : messages;
+      final transcript = recent
+          .map((m) => '${m.role.name.toUpperCase()}: ${m.content}')
+          .join('\n');
+
+      const systemPrompt = '''You are an English teaching assistant analysing a
+conversation between a Persian-speaking student and an AI English tutor.
+
+Return ONLY a JSON object in this exact format (no markdown, no explanation):
+{
+  "well_done": ["specific thing 1", "specific thing 2"],
+  "improve": "one specific grammar/vocabulary pattern to practise",
+  "improve_fa": "همان نکته به فارسی (Persian explanation of the pattern)",
+  "error_words": ["word1", "word2"]
+}
+
+Rules:
+- well_done: 2 SPECIFIC things the student did correctly (e.g. "Used 'would like' correctly", not "Good English")
+- improve: ONE specific pattern (e.g. "Use 'afraid of' not 'afraid from'") — the most frequent or important error
+- improve_fa: Persian explanation of WHY this rule exists
+- error_words: English words/phrases the student used incorrectly (empty list if none)
+- If the student made NO errors, say so in well_done and leave improve empty ("")
+''';
+
+      final response = await llmService.chat(
+        messages: [
+          Message(
+            role: MessageRole.user,
+            content: 'Analyse this conversation:\n\n$transcript',
+          ),
+        ],
+        systemPrompt: systemPrompt,
+        temperature: 0.3,
+      );
+
+      final jsonStr = _extractJson(response);
+      if (jsonStr.isEmpty || jsonStr == '[]') {
+        _pendingFeedback = null;
+      } else {
+        try {
+          final data = jsonDecode(jsonStr) as Map<String, dynamic>;
+          final errorWords =
+              (data['error_words'] as List?)?.cast<String>() ?? [];
+
+          _pendingFeedback = ConversationFeedback(
+            wellDone: (data['well_done'] as List?)?.cast<String>() ?? [],
+            improve: data['improve'] as String? ?? '',
+            improveFa: data['improve_fa'] as String? ?? '',
+            errorWords: errorWords,
+          );
+
+          // Auto-create SRS cards for error words so they enter the review queue.
+          if (srsService != null && errorWords.isNotEmpty) {
+            for (final word in errorWords.take(3)) {
+              try {
+                final lookup = await translationService.lookupWord(word);
+                await srsService!.createFromConversation(
+                  word: word,
+                  translation: lookup.translation,
+                  sentenceContext:
+                      _extractSentenceContaining(transcript, word),
+                  sentenceTranslation: '',
+                  phonetic: lookup.finglish,
+                  partOfSpeech: lookup.partOfSpeech,
+                );
+              } catch (e) {
+                debugPrint('Error creating SRS card for "$word": $e');
+              }
+            }
+          }
+        } catch (e) {
+          debugPrint('Feedback JSON parse error: $e');
+          _pendingFeedback = null;
+        }
+      }
+    } catch (e) {
+      debugPrint('Feedback generation error: $e');
+      _pendingFeedback = null;
+    }
+
+    _isGeneratingFeedback = false;
+    notifyListeners();
+  }
+
+  void clearFeedback() {
+    _pendingFeedback = null;
+    notifyListeners();
+  }
+
   String _extractJson(String text) {
     // Try to find JSON array in the response
     final start = text.indexOf('[');
@@ -370,4 +493,28 @@ class ChatProvider extends ChangeNotifier {
     return 'Error: ${msg.length > 200 ? '${msg.substring(0, 200)}...' : msg}\n\n'
         '(خطا رخ داد. لطفاً تنظیمات مدل را بررسی کنید.)';
   }
+}
+
+/// Structured end-of-conversation feedback from the LLM.
+class ConversationFeedback {
+  const ConversationFeedback({
+    required this.wellDone,
+    required this.improve,
+    required this.improveFa,
+    required this.errorWords,
+  });
+
+  /// 2 specific things the student did correctly.
+  final List<String> wellDone;
+
+  /// One specific grammar/vocabulary pattern to practise.
+  final String improve;
+
+  /// Persian explanation of [improve].
+  final String improveFa;
+
+  /// English words the student used incorrectly (added to SRS automatically).
+  final List<String> errorWords;
+
+  bool get hasContent => wellDone.isNotEmpty || improve.isNotEmpty;
 }

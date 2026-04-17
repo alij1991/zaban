@@ -67,7 +67,18 @@ class LLMService {
     return result;
   }
 
+  /// Inter-token idle timeout. If the backend produces no token for this long
+  /// we assume it has hung and close the stream so the UI is unblocked.
+  ///
+  /// 30s is generous: the Ollama request already has a 120s connect/first-byte
+  /// timeout, so this only fires if decoding genuinely stalls mid-response
+  /// (OOM, GPU driver hiccup, model-load fallback, …).
+  static const Duration _streamIdleTimeout = Duration(seconds: 30);
+
   /// Stream tokens from a chat completion, with context window management.
+  ///
+  /// The stream is wrapped in an idle-timeout so a hung backend can't leave
+  /// the UI showing a perpetual "…" indicator.
   Stream<String> chatStream({
     required List<Message> messages,
     String? systemPrompt,
@@ -84,11 +95,26 @@ class LLMService {
       maxContextTokens: contextLimit,
     );
 
-    await for (final token in _backend.chatStream(
-      messages: backendMessages,
-      temperature: temperature,
-      maxTokens: maxTokens,
-    )) {
+    final source = _backend
+        .chatStream(
+          messages: backendMessages,
+          temperature: temperature,
+          maxTokens: maxTokens,
+        )
+        .timeout(
+          _streamIdleTimeout,
+          onTimeout: (sink) {
+            sink.addError(
+              TimeoutException(
+                'LLM produced no tokens for ${_streamIdleTimeout.inSeconds}s — '
+                'backend likely stalled.',
+              ),
+            );
+            sink.close();
+          },
+        );
+
+    await for (final token in source) {
       if (_isCancelled) break;
       yield token;
     }
@@ -150,6 +176,15 @@ If no errors found, return [].''';
   }
 
   /// Build a system prompt for conversation based on scenario and level.
+  ///
+  /// PREFIX-CACHE INVARIANT (do not break):
+  /// The output of this function must be byte-identical for a given
+  /// `(level, scenarioPrompt)` tuple so llama.cpp / Ollama can reuse the
+  /// KV-cache across turns. Do NOT interpolate per-turn values (time of day,
+  /// turn counter, `DateTime.now()`, username, etc.) into the prompt — those
+  /// belong in the *first user message* or the trailing context, never in
+  /// this prefix. Every byte change here invalidates the cache and re-costs
+  /// the entire prompt each turn.
   static String buildConversationPrompt({
     required CEFRLevel level,
     String? scenarioPrompt,
