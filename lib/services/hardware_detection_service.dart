@@ -8,7 +8,9 @@ class HardwareDetectionService {
     double? vramGb;
     String? gpuName;
 
-    // Strategy 1: nvidia-smi (most reliable for NVIDIA GPUs)
+    // Strategy 1: nvidia-smi (most reliable for NVIDIA GPUs, also works on
+    // Linux and — on the rare eGPU macOS setup — via CUDA). Harmless on
+    // systems where it doesn't exist; Process.run just throws and we catch.
     try {
       final result = await Process.run('nvidia-smi', [
         '--query-gpu=name,memory.total',
@@ -37,7 +39,8 @@ class HardwareDetectionService {
     } catch (_) {}
 
     // Strategy 2: PowerShell with registry (avoids WMI's 4GB AdapterRAM overflow)
-    if (vramGb == null) {
+    // Windows-only — PowerShell + Get-CimInstance don't exist on macOS/Linux.
+    if (vramGb == null && Platform.isWindows) {
       try {
         // Use qmem (dedicated video memory) via DirectX — more reliable than WMI
         final result = await Process.run('powershell', [
@@ -72,18 +75,40 @@ if (-not $regVram) {
       } catch (_) {}
     }
 
-    // Get system RAM
+    // Get system RAM — per-platform probe. LlmModelCatalog.pickForRam relies
+    // on this, so falling back to null degrades to the smallest model.
     double? systemRamGb;
     try {
-      final result = await Process.run('powershell', [
-        '-NoProfile',
-        '-Command',
-        '(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory',
-      ]).timeout(const Duration(seconds: 5));
-      if (result.exitCode == 0) {
-        final bytes = int.tryParse((result.stdout as String).trim());
-        if (bytes != null) {
-          systemRamGb = bytes / (1024 * 1024 * 1024);
+      if (Platform.isWindows) {
+        final result = await Process.run('powershell', [
+          '-NoProfile',
+          '-Command',
+          '(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory',
+        ]).timeout(const Duration(seconds: 5));
+        if (result.exitCode == 0) {
+          final bytes = int.tryParse((result.stdout as String).trim());
+          if (bytes != null) {
+            systemRamGb = bytes / (1024 * 1024 * 1024);
+          }
+        }
+      } else if (Platform.isMacOS) {
+        // `sysctl -n hw.memsize` → total physical memory in bytes.
+        // Reliable on both Apple Silicon and Intel Macs.
+        final result = await Process.run('sysctl', ['-n', 'hw.memsize'])
+            .timeout(const Duration(seconds: 5));
+        if (result.exitCode == 0) {
+          final bytes = int.tryParse((result.stdout as String).trim());
+          if (bytes != null) {
+            systemRamGb = bytes / (1024 * 1024 * 1024);
+          }
+        }
+      } else if (Platform.isLinux) {
+        // /proc/meminfo first line: "MemTotal:       16383440 kB"
+        final meminfo = await File('/proc/meminfo').readAsString();
+        final match = RegExp(r'MemTotal:\s+(\d+)\s+kB').firstMatch(meminfo);
+        if (match != null) {
+          final kb = int.tryParse(match.group(1)!);
+          if (kb != null) systemRamGb = kb / (1024 * 1024);
         }
       }
     } catch (_) {}

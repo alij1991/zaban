@@ -52,6 +52,19 @@ class DirectLlamaBackend implements LLMBackend {
   Future<void> initialize() async {
     if (_isInitialized) return;
 
+    // The Direct FFI backend ships only prebuilt Windows DLLs
+    // (bin/windows/llama/) — see CLAUDE.md for the build-time GGML_BACKEND_DL
+    // story. macOS would need a matching set of custom-built .dylib files,
+    // which we don't ship yet. Surface a clean error instead of letting the
+    // Windows-only DLL-loading code below crash with a cryptic symbol error.
+    if (Platform.isMacOS) {
+      throw Exception(
+        'Direct GGUF backend is Windows-only right now.\n\n'
+        'On macOS, switch to the Ollama backend: Settings → Backend → Ollama, '
+        'then run `ollama pull qwen3:1.7b` (or any model of your choice).',
+      );
+    }
+
     // Validate model file exists
     if (!File(modelPath).existsSync()) {
       throw Exception('GGUF model file not found: $modelPath');

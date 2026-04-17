@@ -6,9 +6,13 @@ This file is auto-loaded into every Claude Code session in this repo. Keep it fo
 
 ## What this project is
 
-**Zaban** — an offline desktop English tutor for Persian (Farsi) speakers. Flutter Desktop (Windows), with local LLMs (Ollama / llama.cpp / flutter_gemma), Moonshine v2 STT (Whisper fallback), and Kokoro TTS. Nothing calls out to any cloud — all inference runs on the user's machine.
+**Zaban** — an offline desktop English tutor for Persian (Farsi) speakers. Flutter Desktop (Windows + macOS), with local LLMs (Ollama / llama.cpp / flutter_gemma), Moonshine v2 STT (Whisper fallback), and Kokoro TTS. Nothing calls out to any cloud — all inference runs on the user's machine.
 
 Target user profile: adult Persian speaker, CEFR A1–C1, laptop-class hardware (8–16 GB RAM, often weak or no GPU).
+
+**Platform support:**
+- **Windows** — primary target, all three LLM backends (Ollama, Direct GGUF FFI, Gemma LiteRT).
+- **macOS** — Ollama backend only. Direct GGUF is gated off at `DirectLlamaBackend.initialize()` because the project only ships prebuilt Windows DLLs (`bin/windows/llama/`). Gemma is allowed but untested on macOS. See `scripts/start_services.command` + `scripts/setup_macos.sh` for the mac equivalents of `start_services.bat` / `setup.bat`. Entitlements for mic + outgoing network live in `macos/Runner/*.entitlements`.
 
 ---
 
@@ -118,14 +122,27 @@ Token-miss-rate (TMR) is tracked as a quality gate: `CEFRService.tokenMissRate` 
 
 ## Running the app
 
+### Windows
 ```bash
 # First time only
 setup.bat                       # creates .venv, installs Python deps, fetches DLLs
-ollama pull gemma3:1b           # pull a small LLM
+ollama pull qwen3:1.7b          # pull a small LLM
 
 # Every session
 scripts\start_services.bat      # starts Moonshine/Whisper + Kokoro (+ Ollama if needed)
 flutter run -d windows          # run the app
+```
+
+### macOS
+```bash
+# First time only
+bash scripts/setup_macos.sh     # creates .venv, installs Python deps (no DLL fetch)
+brew install ollama             # install ollama
+ollama pull qwen3:1.7b          # pull a small LLM
+
+# Every session
+scripts/start_services.command  # opens Ollama + Moonshine + Kokoro in Terminal tabs
+flutter run -d macos            # run the app
 ```
 
 Tests: `flutter test` (sparse — mostly smoke). Static: `flutter analyze` (keep it clean). Build release: `flutter build windows --release`.

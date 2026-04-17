@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../../../services/audio_service.dart';
@@ -175,13 +176,18 @@ class _VoiceInputButtonState extends State<VoiceInputButton>
                 color: const Color(0xFF1E1E2E),
                 borderRadius: BorderRadius.circular(6),
               ),
-              child: const SelectableText(
-                'scripts\\start_services.bat\n'
-                '# or manually:\n'
-                '.venv\\Scripts\\pip install useful-moonshine-onnx\n'
-                '.venv\\Scripts\\python scripts\\moonshine_server.py',
-                style: TextStyle(
-                  fontFamily: 'Consolas',
+              child: SelectableText(
+                Platform.isWindows
+                    ? 'scripts\\start_services.bat\n'
+                        '# or manually:\n'
+                        '.venv\\Scripts\\pip install useful-moonshine-onnx\n'
+                        '.venv\\Scripts\\python scripts\\moonshine_server.py'
+                    : 'scripts/start_services.command\n'
+                        '# or manually:\n'
+                        '.venv/bin/pip install useful-moonshine-onnx\n'
+                        '.venv/bin/python scripts/moonshine_server.py',
+                style: const TextStyle(
+                  fontFamily: 'Menlo',
                   color: Color(0xFF50FA7B),
                   fontSize: 13,
                 ),

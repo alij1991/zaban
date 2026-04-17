@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import '../../utils/phoneme_mappings.dart';
 import '../../models/pronunciation_result.dart';
@@ -19,6 +19,10 @@ class _PronunciationScreenState extends State<PronunciationScreen>
   final _audioService = AudioService();
   final _ttsService = TTSService();
   final _whisperService = WhisperTranscriptionService();
+  // Use `audioplayers` for playback (miniaudio-backed, works on Windows +
+  // macOS + Linux). Previously we shelled out to PowerShell's SoundPlayer,
+  // which was Windows-only and would silently no-op on macOS.
+  final AudioPlayer _playbackPlayer = AudioPlayer();
 
   @override
   void initState() {
@@ -32,6 +36,7 @@ class _PronunciationScreenState extends State<PronunciationScreen>
     _audioService.dispose();
     _ttsService.dispose();
     _whisperService.dispose();
+    _playbackPlayer.dispose();
     super.dispose();
   }
 
@@ -39,10 +44,8 @@ class _PronunciationScreenState extends State<PronunciationScreen>
     final path = await _ttsService.synthesize(text);
     if (path != null) {
       try {
-        await Process.run('powershell', [
-          '-NoProfile', '-Command',
-          '(New-Object Media.SoundPlayer "$path").PlaySync()',
-        ]);
+        await _playbackPlayer.stop();
+        await _playbackPlayer.play(DeviceFileSource(path));
       } catch (_) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
